@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SmartRoad Admin — Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
+    import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-analytics.js";
+    import {
+      getAuth,
+      onAuthStateChanged,
+      signOut
+    } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
+    import {
+      getFirestore,
+      doc,
+      getDoc,
+      collection,
+      getDocs
+    } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyA3akQlH2taxlk1QspxIapL40MarzEroAA",
+      authDomain: "smartroad-ac252.firebaseapp.com",
+      projectId: "smartroad-ac252",
+      storageBucket: "smartroad-ac252.firebasestorage.app",
+      messagingSenderId: "146408848910",
+      appId: "1:146408848910:web:f42852b785b3485da1865f",
+      measurementId: "G-5R5V5V9CTL"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const analytics = getAnalytics(app);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    const signedInAsEl = document.getElementById("signed-in-as");
+    const signOutBtn = document.getElementById("sign-out-btn");
+    const statTotalUsers = document.getElementById("stat-total-users");
+    const statTotalReports = document.getElementById("stat-total-reports");
+    const statOpenReports = document.getElementById("stat-open-reports");
+    const statResolvedReports = document.getElementById("stat-resolved-reports");
+    const recentReportsBody = document.getElementById("recent-reports-body");
+    const recentReportsEmpty = document.getElementById("recent-reports-empty");
+
+    function statusPillClass(status) {
+      return "status-pill status-" + String(status).replace(/\s+/g, "-");
+    }
+
+    function formatDate(timestamp) {
+      if (!timestamp || typeof timestamp.toDate !== "function") return "—";
+      const date = timestamp.toDate();
+      return date.toLocaleString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    }
+
+    async function loadDashboardData() {
+      const usersSnap = await getDocs(collection(db, "users"));
+      const nonAdminUsersCount = usersSnap.docs.filter((docSnap) => docSnap.data().isAdmin !== true).length;
+      statTotalUsers.textContent = nonAdminUsersCount;
+
+      const reportsSnap = await getDocs(collection(db, "hazard_reports"));
+      const reports = reportsSnap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+
+      const totalReports = reports.length;
+      const resolvedReports = reports.filter((report) => report.status === "Resolved").length;
+      const openReports = totalReports - resolvedReports;
+
+      statTotalReports.textContent = totalReports;
+      statOpenReports.textContent = openReports;
+      statResolvedReports.textContent = resolvedReports;
+
+      const recentReports = reports
+        .slice()
+        .sort((a, b) => {
+          const aTime = a.createdAt && a.createdAt.toMillis ? a.createdAt.toMillis() : 0;
+          const bTime = b.createdAt && b.createdAt.toMillis ? b.createdAt.toMillis() : 0;
+          return bTime - aTime;
+        })
+        .slice(0, 10);
+
+      recentReportsBody.innerHTML = "";
+
+      if (recentReports.length === 0) {
+        recentReportsEmpty.style.display = "block";
+      } else {
+        recentReportsEmpty.style.display = "none";
+        for (const report of recentReports) {
+          const row = document.createElement("tr");
+          row.innerHTML = `
+            <td>${report.username ?? "—"}</td>
+            <td>${report.hazardType ?? "—"}</td>
+            <td>${formatDate(report.createdAt)}</td>
+            <td><span class="${statusPillClass(report.status)}">${report.status ?? "—"}</span></td>
+          `;
+          recentReportsBody.appendChild(row);
+        }
+      }
+    }
+
+    onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        window.location.href = "index.html";
+        return;
+      }
+
+      const userDocSnap = await getDoc(doc(db, "users", user.uid));
+      const isAdmin = userDocSnap.exists() && userDocSnap.data().isAdmin === true;
+
+      if (!isAdmin) {
+        await signOut(auth);
+        window.location.href = "index.html";
+        return;
+      }
+
+      signedInAsEl.textContent = user.email;
+
+      try {
+        await loadDashboardData();
+      } catch (error) {
+        console.error(error);
+        recentReportsEmpty.textContent = "Failed to load dashboard data.";
+        recentReportsEmpty.style.display = "block";
+      }
+    });
+
+    signOutBtn.addEventListener("click", async () => {
+      await signOut(auth);
+      window.location.href = "index.html";
+    });
+  </script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <svg class="brand-logo" viewBox="0 0 100 100" width="32" height="32" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="SmartRoad logo">
+        <circle cx="50" cy="50" r="48" fill="#0D2340" />
+        <path d="M50 20 L75 72 L25 72 Z" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linejoin="round" stroke-linecap="round" />
+        <rect x="47" y="40" width="6" height="16" rx="3" fill="#FFFFFF" />
+        <circle cx="50" cy="62" r="4" fill="#FFFFFF" />
+      </svg>
+      <span>SmartRoad Admin</span>
+    </div>
+    <nav class="app-nav">
+      <a href="dashboard.html" class="active">Dashboard</a>
+      <a href="manage-reports.html">Manage Reports</a>
+      <span class="signed-in-as" id="signed-in-as"></span>
+      <button class="btn-link" id="sign-out-btn">Sign Out</button>
+    </nav>
+  </header>
+
+  <main class="app-main">
+    <h1>Dashboard</h1>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Total Users</div>
+        <div class="stat-value" id="stat-total-users">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Total Reports</div>
+        <div class="stat-value" id="stat-total-reports">—</div>
+      </div>
+      <div class="stat-card stat-card--accent-red">
+        <div class="stat-label">Open Reports</div>
+        <div class="stat-value" id="stat-open-reports">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Resolved Reports</div>
+        <div class="stat-value" id="stat-resolved-reports">—</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">Recent Reports</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Username</th>
+            <th>Hazard Type</th>
+            <th>Date</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="recent-reports-body"></tbody>
+      </table>
+      <div class="empty-state" id="recent-reports-empty" style="display: none;">No reports found.</div>
+    </div>
+  </main>
+</body>
+</html>

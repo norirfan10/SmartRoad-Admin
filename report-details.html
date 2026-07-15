@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SmartRoad Admin — Report Details</title>
+  <link rel="stylesheet" href="style.css" />
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
+    import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-analytics.js";
+    import {
+      getAuth,
+      onAuthStateChanged,
+      signOut
+    } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
+    import {
+      getFirestore,
+      doc,
+      getDoc,
+      updateDoc,
+      deleteDoc
+    } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyA3akQlH2taxlk1QspxIapL40MarzEroAA",
+      authDomain: "smartroad-ac252.firebaseapp.com",
+      projectId: "smartroad-ac252",
+      storageBucket: "smartroad-ac252.firebasestorage.app",
+      messagingSenderId: "146408848910",
+      appId: "1:146408848910:web:f42852b785b3485da1865f",
+      measurementId: "G-5R5V5V9CTL"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const analytics = getAnalytics(app);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    const reportId = new URLSearchParams(window.location.search).get("id");
+
+    const signedInAsEl = document.getElementById("signed-in-as");
+    const signOutBtn = document.getElementById("sign-out-btn");
+
+    const detailLayout = document.getElementById("detail-layout");
+    const loadingState = document.getElementById("loading-state");
+    const notFoundState = document.getElementById("not-found-state");
+
+    const fieldUsername = document.getElementById("field-username");
+    const fieldHazardType = document.getElementById("field-hazard-type");
+    const fieldDescription = document.getElementById("field-description");
+    const fieldCoordinates = document.getElementById("field-coordinates");
+    const fieldDate = document.getElementById("field-date");
+    const fieldUserAgent = document.getElementById("field-user-agent");
+
+    const photoFrame = document.getElementById("photo-frame");
+
+    const statusSelect = document.getElementById("status-select");
+    const saveBtn = document.getElementById("save-btn");
+    const saveMessage = document.getElementById("save-message");
+    const deleteBtn = document.getElementById("delete-btn");
+
+    function formatDate(timestamp) {
+      if (!timestamp || typeof timestamp.toDate !== "function") return "—";
+      const date = timestamp.toDate();
+      return date.toLocaleString(undefined, {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      });
+    }
+
+    async function loadReport() {
+      if (!reportId) {
+        loadingState.style.display = "none";
+        notFoundState.style.display = "block";
+        return;
+      }
+
+      const reportSnap = await getDoc(doc(db, "hazard_reports", reportId));
+
+      if (!reportSnap.exists()) {
+        loadingState.style.display = "none";
+        notFoundState.style.display = "block";
+        return;
+      }
+
+      const report = reportSnap.data();
+
+      fieldUsername.textContent = report.username ?? "—";
+      fieldHazardType.textContent = report.hazardType ?? "—";
+      fieldDescription.textContent = report.description ?? "—";
+      fieldCoordinates.textContent =
+        typeof report.latitude === "number" && typeof report.longitude === "number"
+          ? `${report.latitude}, ${report.longitude}`
+          : "—";
+      fieldDate.textContent = formatDate(report.createdAt);
+      fieldUserAgent.textContent = report.userAgent ?? "—";
+
+      if (report.photoUrl) {
+        photoFrame.innerHTML = `<img src="${report.photoUrl}" alt="Hazard report photo" />`;
+      } else {
+        photoFrame.innerHTML = `<div class="photo-placeholder">No photo attached</div>`;
+      }
+
+      statusSelect.value = report.status ?? "New";
+
+      loadingState.style.display = "none";
+      detailLayout.style.display = "grid";
+    }
+
+    saveBtn.addEventListener("click", async () => {
+      saveMessage.classList.remove("visible");
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Saving...";
+
+      try {
+        await updateDoc(doc(db, "hazard_reports", reportId), { status: statusSelect.value });
+        saveMessage.textContent = "Status updated successfully.";
+        saveMessage.classList.add("visible");
+      } catch (error) {
+        console.error(error);
+        alert("Failed to update status. Please try again.");
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Save";
+      }
+    });
+
+    deleteBtn.addEventListener("click", async () => {
+      const confirmed = confirm("Delete this report? This action cannot be undone.");
+      if (!confirmed) return;
+
+      deleteBtn.disabled = true;
+      try {
+        await deleteDoc(doc(db, "hazard_reports", reportId));
+        window.location.href = "manage-reports.html";
+      } catch (error) {
+        console.error(error);
+        alert("Failed to delete report. Please try again.");
+        deleteBtn.disabled = false;
+      }
+    });
+
+    onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        window.location.href = "index.html";
+        return;
+      }
+
+      const userDocSnap = await getDoc(doc(db, "users", user.uid));
+      const isAdmin = userDocSnap.exists() && userDocSnap.data().isAdmin === true;
+
+      if (!isAdmin) {
+        await signOut(auth);
+        window.location.href = "index.html";
+        return;
+      }
+
+      signedInAsEl.textContent = user.email;
+
+      try {
+        await loadReport();
+      } catch (error) {
+        console.error(error);
+        loadingState.style.display = "none";
+        notFoundState.textContent = "Failed to load report.";
+        notFoundState.style.display = "block";
+      }
+    });
+
+    signOutBtn.addEventListener("click", async () => {
+      await signOut(auth);
+      window.location.href = "index.html";
+    });
+  </script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <svg class="brand-logo" viewBox="0 0 100 100" width="32" height="32" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="SmartRoad logo">
+        <circle cx="50" cy="50" r="48" fill="#0D2340" />
+        <path d="M50 20 L75 72 L25 72 Z" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linejoin="round" stroke-linecap="round" />
+        <rect x="47" y="40" width="6" height="16" rx="3" fill="#FFFFFF" />
+        <circle cx="50" cy="62" r="4" fill="#FFFFFF" />
+      </svg>
+      <span>SmartRoad Admin</span>
+    </div>
+    <nav class="app-nav">
+      <a href="dashboard.html">Dashboard</a>
+      <a href="manage-reports.html" class="active">Manage Reports</a>
+      <span class="signed-in-as" id="signed-in-as"></span>
+      <button class="btn-link" id="sign-out-btn">Sign Out</button>
+    </nav>
+  </header>
+
+  <main class="app-main">
+    <a class="back-link" href="manage-reports.html">&larr; Back to Manage Reports</a>
+    <h1>Report Details</h1>
+
+    <div class="loading-state" id="loading-state">Loading report…</div>
+    <div class="empty-state" id="not-found-state" style="display: none;">Report not found.</div>
+
+    <div class="detail-layout" id="detail-layout" style="display: none;">
+      <div class="panel detail-panel">
+        <div class="detail-grid">
+          <div class="detail-item">
+            <div class="detail-label">Username</div>
+            <div class="detail-value" id="field-username">—</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Hazard Type</div>
+            <div class="detail-value" id="field-hazard-type">—</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Date &amp; Time</div>
+            <div class="detail-value" id="field-date">—</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Coordinates</div>
+            <div class="detail-value" id="field-coordinates">—</div>
+          </div>
+          <div class="detail-item full-width">
+            <div class="detail-label">User Agent</div>
+            <div class="detail-value" id="field-user-agent">—</div>
+          </div>
+          <div class="detail-item full-width">
+            <div class="detail-label">Description</div>
+            <div class="detail-value" id="field-description">—</div>
+          </div>
+        </div>
+
+        <div class="save-message" id="save-message"></div>
+
+        <div class="status-form">
+          <label for="status-select">Status</label>
+          <select id="status-select">
+            <option value="New">New</option>
+            <option value="Under Investigation">Under Investigation</option>
+            <option value="Resolved">Resolved</option>
+          </select>
+          <button type="button" class="btn" id="save-btn">Save</button>
+        </div>
+
+        <div class="danger-zone">
+          <button type="button" class="btn btn-danger" id="delete-btn">Delete Report</button>
+        </div>
+      </div>
+
+      <div class="panel photo-panel">
+        <div class="detail-label" style="margin-bottom: 10px;">Photo</div>
+        <div class="photo-frame" id="photo-frame">
+          <div class="photo-placeholder">Loading photo…</div>
+        </div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>
