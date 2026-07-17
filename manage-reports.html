@@ -4,7 +4,18 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SmartRoad Admin — Manage Reports</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=3" />
+
+  <script>
+    window.__googleMapsReady = false;
+    window.initGoogleMapsCallback = function () {
+      window.__googleMapsReady = true;
+      if (typeof window.__onGoogleMapsReady === "function") {
+        window.__onGoogleMapsReady();
+      }
+    };
+  </script>
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCAxhCRK98jmFuF1bvTDx858_03Ep3O6f4&callback=initGoogleMapsCallback&loading=async" async defer></script>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
@@ -20,8 +31,10 @@
       getDoc,
       collection,
       getDocs,
+      addDoc,
       updateDoc,
-      deleteDoc
+      deleteDoc,
+      serverTimestamp
     } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -54,7 +67,33 @@
     const dateToInput = document.getElementById("filter-date-to");
     const clearFiltersBtn = document.getElementById("clear-filters-btn");
 
+    const addReportBtn = document.getElementById("add-report-btn");
+    const addReportModal = document.getElementById("add-report-modal");
+    const addReportForm = document.getElementById("add-report-form");
+    const addReportCancelBtn = document.getElementById("add-report-cancel-btn");
+    const addReportCloseBtn = document.getElementById("add-report-close-btn");
+    const addReportError = document.getElementById("add-report-error");
+    const addReportSubmitBtn = document.getElementById("add-report-submit-btn");
+
+    const addLatitudeInput = document.getElementById("add-latitude");
+    const addLongitudeInput = document.getElementById("add-longitude");
+    const mapPickerEl = document.getElementById("add-report-map");
+
+    const addPhotoFileInput = document.getElementById("add-photo-file");
+    const photoUploadStatus = document.getElementById("photo-upload-status");
+    const photoPreview = document.getElementById("photo-preview");
+    const photoPreviewImg = document.getElementById("photo-preview-img");
+
+    const MELAKA_CENTER = { lat: 2.1896, lng: 102.2501 };
+    const CLOUDINARY_UPLOAD_URL = "https://api.cloudinary.com/v1_1/trw0gwr6/image/upload";
+    const CLOUDINARY_UPLOAD_PRESET = "smartroad_hazards";
+
     let allReports = [];
+    let map = null;
+    let marker = null;
+    let mapInitPending = false;
+    let uploadedPhotoUrl = "";
+    let photoUploadInProgress = false;
 
     function statusPillClass(status) {
       return "status-pill status-" + String(status).replace(/\s+/g, "-");
@@ -215,6 +254,187 @@
       renderTable();
     });
 
+    function placeMarker(latLng) {
+      if (marker) {
+        marker.setPosition(latLng);
+      } else {
+        marker = new google.maps.Marker({ position: latLng, map });
+      }
+      addLatitudeInput.value = latLng.lat().toFixed(6);
+      addLongitudeInput.value = latLng.lng().toFixed(6);
+    }
+
+    function setupMap() {
+      map = new google.maps.Map(mapPickerEl, {
+        center: MELAKA_CENTER,
+        zoom: 12
+      });
+      map.addListener("click", (event) => placeMarker(event.latLng));
+    }
+
+    function ensureMapInitialized() {
+      if (map) {
+        google.maps.event.trigger(map, "resize");
+        map.setCenter(marker ? marker.getPosition() : MELAKA_CENTER);
+        return;
+      }
+      if (window.__googleMapsReady) {
+        setupMap();
+      } else {
+        mapInitPending = true;
+      }
+    }
+
+    window.__onGoogleMapsReady = () => {
+      if (mapInitPending) {
+        setupMap();
+        mapInitPending = false;
+      }
+    };
+
+    function clearMapSelection() {
+      if (marker) {
+        marker.setMap(null);
+        marker = null;
+      }
+      addLatitudeInput.value = "";
+      addLongitudeInput.value = "";
+    }
+
+    function resetPhotoUpload() {
+      addPhotoFileInput.value = "";
+      uploadedPhotoUrl = "";
+      photoUploadInProgress = false;
+      photoUploadStatus.textContent = "";
+      photoUploadStatus.classList.remove("error", "success");
+      photoPreview.style.display = "none";
+      photoPreviewImg.src = "";
+    }
+
+    addPhotoFileInput.addEventListener("change", async () => {
+      const file = addPhotoFileInput.files[0];
+      uploadedPhotoUrl = "";
+      photoUploadStatus.classList.remove("error", "success");
+
+      if (!file) {
+        photoPreview.style.display = "none";
+        photoUploadStatus.textContent = "";
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        photoPreviewImg.src = reader.result;
+        photoPreview.style.display = "block";
+      };
+      reader.readAsDataURL(file);
+
+      photoUploadInProgress = true;
+      photoUploadStatus.textContent = "Uploading…";
+
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+
+        const response = await fetch(CLOUDINARY_UPLOAD_URL, {
+          method: "POST",
+          body: formData
+        });
+
+        if (!response.ok) throw new Error("Upload failed");
+
+        const data = await response.json();
+        if (!data.secure_url) throw new Error("Upload failed");
+
+        uploadedPhotoUrl = data.secure_url;
+        photoUploadStatus.textContent = "Photo uploaded.";
+        photoUploadStatus.classList.add("success");
+      } catch (error) {
+        console.error(error);
+        uploadedPhotoUrl = "";
+        photoUploadStatus.textContent = "Failed to upload photo. Please try again or remove the selected file.";
+        photoUploadStatus.classList.add("error");
+      } finally {
+        photoUploadInProgress = false;
+      }
+    });
+
+    function openAddReportModal() {
+      addReportForm.reset();
+      document.getElementById("add-status").value = "New";
+      addReportError.classList.remove("visible");
+      clearMapSelection();
+      resetPhotoUpload();
+      addReportModal.classList.add("visible");
+      requestAnimationFrame(ensureMapInitialized);
+    }
+
+    function closeAddReportModal() {
+      addReportModal.classList.remove("visible");
+    }
+
+    addReportBtn.addEventListener("click", openAddReportModal);
+    addReportCancelBtn.addEventListener("click", closeAddReportModal);
+    addReportCloseBtn.addEventListener("click", closeAddReportModal);
+    addReportModal.addEventListener("click", (event) => {
+      if (event.target === addReportModal) closeAddReportModal();
+    });
+
+    addReportForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      const hazardType = document.getElementById("add-hazard-type").value;
+      const description = document.getElementById("add-description").value.trim();
+      const latitudeRaw = addLatitudeInput.value;
+      const longitudeRaw = addLongitudeInput.value;
+      const status = document.getElementById("add-status").value;
+
+      const latitude = parseFloat(latitudeRaw);
+      const longitude = parseFloat(longitudeRaw);
+
+      if (!hazardType || latitudeRaw === "" || longitudeRaw === "" || Number.isNaN(latitude) || Number.isNaN(longitude)) {
+        addReportError.textContent = "Hazard type is required, and a location must be selected on the map.";
+        addReportError.classList.add("visible");
+        return;
+      }
+
+      if (addPhotoFileInput.files.length > 0 && !uploadedPhotoUrl) {
+        addReportError.textContent = photoUploadInProgress
+          ? "Please wait for the photo to finish uploading."
+          : "Photo upload failed. Please retry or remove the selected file before submitting.";
+        addReportError.classList.add("visible");
+        return;
+      }
+
+      addReportError.classList.remove("visible");
+      addReportSubmitBtn.disabled = true;
+
+      try {
+        await addDoc(collection(db, "hazard_reports"), {
+          userId: auth.currentUser.uid,
+          username: "Admin",
+          hazardType,
+          description,
+          photoUrl: uploadedPhotoUrl,
+          latitude,
+          longitude,
+          status,
+          userAgent: "Admin Panel",
+          createdAt: serverTimestamp()
+        });
+
+        closeAddReportModal();
+        await loadReports();
+      } catch (error) {
+        console.error(error);
+        addReportError.textContent = "Failed to add report. Please try again.";
+        addReportError.classList.add("visible");
+      } finally {
+        addReportSubmitBtn.disabled = false;
+      }
+    });
+
     onAuthStateChanged(auth, async (user) => {
       if (!user) {
         window.location.href = "index.html";
@@ -267,7 +487,10 @@
   </header>
 
   <main class="app-main">
-    <h1>Manage Reports</h1>
+    <div class="page-header">
+      <h1>Manage Reports</h1>
+      <button type="button" class="btn" id="add-report-btn">+ Add Report</button>
+    </div>
 
     <div class="panel">
       <div class="filters-bar">
@@ -328,5 +551,73 @@
       <div class="empty-state" id="reports-empty" style="display: none;">No reports found.</div>
     </div>
   </main>
+
+  <div class="modal-overlay" id="add-report-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Add Report</h2>
+        <button type="button" class="modal-close" id="add-report-close-btn" aria-label="Close">&times;</button>
+      </div>
+      <form id="add-report-form">
+        <div class="modal-body">
+          <div class="error-message" id="add-report-error"></div>
+
+          <div class="field">
+            <label for="add-hazard-type">Hazard Type</label>
+            <select id="add-hazard-type" required>
+              <option value="">Select hazard type…</option>
+              <option value="Pothole">Pothole</option>
+              <option value="Flood">Flood</option>
+              <option value="Accident">Accident</option>
+              <option value="Fallen Tree">Fallen Tree</option>
+              <option value="Traffic Light">Traffic Light</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="add-description">Description</label>
+            <textarea id="add-description" rows="3" placeholder="Describe the hazard..."></textarea>
+          </div>
+
+          <div class="field">
+            <label>Location <span class="hint-inline">(click the map to place a marker)</span></label>
+            <div id="add-report-map" class="map-picker"></div>
+            <div class="form-row" style="margin-top: 10px;">
+              <div class="field">
+                <label for="add-latitude">Latitude</label>
+                <input type="text" id="add-latitude" readonly placeholder="Click map…" />
+              </div>
+              <div class="field">
+                <label for="add-longitude">Longitude</label>
+                <input type="text" id="add-longitude" readonly placeholder="Click map…" />
+              </div>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="add-status">Status</label>
+            <select id="add-status">
+              <option value="New">New</option>
+              <option value="Under Investigation">Under Investigation</option>
+              <option value="Resolved">Resolved</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="add-photo-file">Photo (optional)</label>
+            <input type="file" id="add-photo-file" accept="image/*" />
+            <div class="photo-upload-status" id="photo-upload-status"></div>
+            <div class="photo-preview" id="photo-preview" style="display: none;">
+              <img id="photo-preview-img" alt="Selected photo preview" />
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" id="add-report-cancel-btn">Cancel</button>
+          <button type="submit" class="btn" id="add-report-submit-btn">Add Report</button>
+        </div>
+      </form>
+    </div>
+  </div>
 </body>
 </html>
